@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "science-article-gnn"
+version = "0.1.0"
+description = "GNN experiments on RelBench entity tasks"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # torch is left unpinned so Colab keeps its preinstalled CUDA build
+    "torch",
+    "torch_geometric",
+    # imported as `torch_frame`; NOT the unrelated `torch-frame` package on PyPI
+    "pytorch-frame[full]",
+    "relbench>=3.0.1",
+    "sentence-transformers",
+    "numpy",
+    "pandas",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+notebook = [
+    "ipykernel",
+]
+
+[tool.setuptools]
+py-modules = ["gnn_entity", "model", "text_embedder"]
