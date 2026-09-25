@@ -1,0 +1,244 @@
+import argparse
+import copy
+import math
+import os
+
+import numpy as np
+import pandas as pd
+import torch
+from relbench.base import Dataset, EntityTask, Table, TaskType
+from relbench.modeling.graph import get_node_train_table_input, make_pkey_fkey_graph
+from relbench.modeling.utils import get_stype_proposal
+from relbench.submit import evaluate_task, write_prediction_table
+from torch.nn import BCEWithLogitsLoss, L1Loss
+from torch_frame import stype
+from torch_frame.config.text_embedder import TextEmbedderConfig
+from torch_geometric.loader import NeighborLoader
+from torch_geometric.seed import seed_everything
+from tqdm import tqdm
+
+from model import Model
+from relbench import load_dataset
+from text_embedder import GloveTextEmbedding
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", type=str, default="rel-event")
+parser.add_argument("--task", type=str, default="user-attendance")
+parser.add_argument("--lr", type=float, default=0.005)
+parser.add_argument("--epochs", type=int, default=10)
+parser.add_argument("--batch_size", type=int, default=512)
+parser.add_argument("--channels", type=int, default=128)
+parser.add_argument("--aggr", type=str, default="sum")
+parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_neighbors", type=int, default=128)
+parser.add_argument("--gnn", type=str, default="sage", choices=["sage", "gat"])
+parser.add_argument("--gat_heads", type=int, default=4)
+parser.add_argument("--gat_dropout", type=float, default=0.0)
+parser.add_argument("--temporal_strategy", type=str, default="uniform")
+parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
+parser.add_argument("--num_workers", type=int, default=0)
+parser.add_argument("--seed", type=int, default=42)
+parser.add_argument(
+    "--include_task_tables",
+    type=str,
+    default="none",
+    help="Optionally include labels as autoregressive features with \
+        appropriate time censoring. One of 'all', \
+        'current_only', or 'none'.",
+)
+parser.add_argument("--pred_dir", type=str, default="/tmp/relbench_preds")
+args = parser.parse_args()
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    torch.set_num_threads(1)
+seed_everything(args.seed)
+
+dataset: Dataset = load_dataset(args.dataset)
+loaded_task = dataset.load_task(args.task)
+assert isinstance(loaded_task, EntityTask), f"{args.task} is not an entity task"
+task: EntityTask = loaded_task
+
+db = dataset.get_db()
+
+# кэш выключен: типы колонок пересчитываются заново при каждом запуске
+col_to_stype_dict = get_stype_proposal(db)
+
+if args.include_task_tables == "all":
+    tasks_to_add = dataset.get_task_names()
+elif args.include_task_tables == "current_only":
+    tasks_to_add = [args.task]
+else:
+    tasks_to_add = []
+
+
+# add (time-censored) labels tables to the db
+for task_name in tasks_to_add:
+    t = dataset.load_task(task_name)
+    if not isinstance(t, EntityTask):
+        continue
+    labels_table_name = f"{task_name}_labels"
+    label_df = pd.concat(
+        [
+            t.get_table("train").df,
+            t.get_table("val").df,
+            # test set not included b/c labels are not revealed
+        ]
+    )
+    # time-censoring labels: we add timedelta to the time column to ensure that
+    # the labels become available at the appropriate time (i.e. no leakage)
+    label_df[t.time_col] = label_df[t.time_col] + t.timedelta
+    db.table_dict[labels_table_name] = Table(
+        df=label_df,
+        fkey_col_to_pkey_table={t.entity_col: t.entity_table},
+        pkey_col=None,
+        time_col=t.time_col,
+    )
+    col_to_stype_dict[labels_table_name] = {
+        t.entity_col: stype.numerical,
+        t.time_col: stype.timestamp,
+        t.target_col: stype.numerical,
+    }
+
+data, col_stats_dict = make_pkey_fkey_graph(
+    db,
+    col_to_stype_dict=col_to_stype_dict,
+    text_embedder_cfg=TextEmbedderConfig(
+        text_embedder=GloveTextEmbedding(device="cpu"), batch_size=256
+    ),
+    remove_columns=task.hidden_columns(),
+)
+
+clamp_min, clamp_max = None, None
+if task.task_type == TaskType.BINARY_CLASSIFICATION:
+    out_channels = 1
+    loss_fn = BCEWithLogitsLoss()
+    tune_metric = "roc_auc"
+    higher_is_better = True
+elif task.task_type == TaskType.REGRESSION:
+    out_channels = 1
+    loss_fn = L1Loss()
+    tune_metric = "nmae"
+    higher_is_better = False
+    # Get the clamp value at inference time
+    train_table = task.get_table("train")
+    clamp_min, clamp_max = np.percentile(
+        train_table.df[task.target_col].to_numpy(), [2, 98]
+    )
+else:
+    raise ValueError(f"Unsupported task type: {task.task_type}")
+
+val_table = task.get_table("val")  # hoisted: get_table is uncached
+
+loader_dict: dict[str, NeighborLoader] = {}
+for split in ["train", "val", "test"]:
+    table = task.get_table(split)
+    table_input = get_node_train_table_input(table=table, task=task)
+    entity_table = table_input.nodes[0]
+    loader_dict[split] = NeighborLoader(
+        data,
+        num_neighbors=[int(args.num_neighbors / 2**i) for i in range(args.num_layers)],
+        time_attr="time",
+        input_nodes=table_input.nodes,
+        input_time=table_input.time,
+        transform=table_input.transform,
+        batch_size=args.batch_size,
+        temporal_strategy=args.temporal_strategy,
+        shuffle=split == "train",
+        num_workers=args.num_workers,
+        persistent_workers=args.num_workers > 0,
+    )
+
+
+def train() -> float:
+    model.train()
+
+    loss_accum = count_accum = 0
+    total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
+    for steps, batch in enumerate(tqdm(loader_dict["train"], total=total_steps)):
+        batch = batch.to(device)
+
+        optimizer.zero_grad()
+        pred = model(
+            batch,
+            task.entity_table,
+        )
+        pred = pred.view(-1) if pred.size(1) == 1 else pred
+
+        loss = loss_fn(pred.float(), batch[entity_table].y.float())
+        loss.backward()
+        optimizer.step()
+
+        loss_accum += loss.detach().item() * pred.size(0)
+        count_accum += pred.size(0)
+
+        if steps > args.max_steps_per_epoch:
+            break
+
+    return loss_accum / count_accum
+
+
+@torch.no_grad()
+def test(loader: NeighborLoader) -> np.ndarray:
+    model.eval()
+
+    pred_list = []
+    for batch in tqdm(loader):
+        batch = batch.to(device)
+        pred = model(
+            batch,
+            task.entity_table,
+        )
+        if task.task_type == TaskType.REGRESSION:
+            assert clamp_min is not None
+            assert clamp_max is not None
+            pred = torch.clamp(pred, clamp_min, clamp_max)
+
+        if task.task_type == TaskType.BINARY_CLASSIFICATION:
+            pred = torch.sigmoid(pred)
+
+        pred = pred.view(-1) if pred.size(1) == 1 else pred
+        pred_list.append(pred.detach().cpu())
+    return torch.cat(pred_list, dim=0).numpy()
+
+
+model = Model(
+    data=data,
+    col_stats_dict=col_stats_dict,
+    num_layers=args.num_layers,
+    channels=args.channels,
+    out_channels=out_channels,
+    aggr=args.aggr,
+    norm="batch_norm",
+    gnn=args.gnn,
+    gat_heads=args.gat_heads,
+    gat_dropout=args.gat_dropout,
+).to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+state_dict = None
+best_val_metric = -math.inf if higher_is_better else math.inf
+for epoch in range(1, args.epochs + 1):
+    train_loss = train()
+    val_pred = test(loader_dict["val"])
+    val_metrics = task.evaluate(val_pred, val_table)
+    print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, Val metrics: {val_metrics}")
+
+    if (higher_is_better and val_metrics[tune_metric] >= best_val_metric) or (
+        not higher_is_better and val_metrics[tune_metric] <= best_val_metric
+    ):
+        best_val_metric = val_metrics[tune_metric]
+        state_dict = copy.deepcopy(model.state_dict())
+
+
+model.load_state_dict(state_dict)
+val_pred = test(loader_dict["val"])
+val_metrics = task.evaluate(val_pred, val_table)
+print(f"Best Val metrics: {val_metrics}")
+
+test_pred = test(loader_dict["test"])
+os.makedirs(args.pred_dir, exist_ok=True)
+pred_path = os.path.join(args.pred_dir, f"{args.dataset}__{args.task}.csv")
+write_prediction_table(task, test_pred, pred_path)
+test_metrics = evaluate_task(f"{args.dataset}/{args.task}", pred_path)
+print(f"Best test metrics: {test_metrics}")
