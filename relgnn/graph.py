@@ -63,6 +63,19 @@ def build_graph(
             for col, stype_ in col_to_stype_dict[table_name].items()
             if col not in not_features
         }
+        if col_stats_dict is None:
+            # A column without a single value (e.g. fully suppressed) carries no
+            # information, and its stats are placeholders (-1) that break the encoders.
+            col_to_stype = {
+                col: stype_ for col, stype_ in col_to_stype.items() if df[col].notna().any()
+            }
+        else:
+            # Encode exactly the columns the model was trained on.
+            col_to_stype = {
+                col: stype_
+                for col, stype_ in col_to_stype.items()
+                if col in col_stats_dict[table_name]
+            }
         if len(col_to_stype) == 0:  # Add constant feature in case df is empty:
             col_to_stype = {"__const__": stype.numerical}
             df = pd.DataFrame({"__const__": np.ones(len(df))})
