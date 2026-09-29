@@ -35,7 +35,8 @@ def find_pyg_wheel_index() -> str | None:
 
 
 def main() -> None:
-    pip_install(".")
+    # editable: changes to relgnn/ take effect without reinstalling
+    pip_install("-e", ".")
 
     url = find_pyg_wheel_index()
     if url is None:

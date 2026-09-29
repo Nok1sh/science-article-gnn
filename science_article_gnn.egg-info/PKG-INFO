@@ -1,3 +1,20 @@
+Metadata-Version: 2.4
+Name: science-article-gnn
+Version: 0.1.0
+Summary: GNN experiments on RelBench entity tasks
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: torch
+Requires-Dist: torch_geometric
+Requires-Dist: pytorch-frame[full]
+Requires-Dist: relbench>=3.0.1
+Requires-Dist: sentence-transformers
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: tqdm
+Provides-Extra: notebook
+Requires-Dist: ipykernel; extra == "notebook"
+
 # science-article-gnn
 
 GNN on RelBench entity tasks, trained and evaluated on original and masked data.
@@ -37,24 +54,7 @@ for mask in [None, masks.noise(0.1), masks.noise(0.5), masks.shuffle(0.5)]:
 
 ## Masks
 
-Built in:
-
-| Mask | Effect |
-| --- | --- |
-| `noise(strength)` | Gaussian noise, std = strength × column std, numerical columns |
-| `shuffle(fraction)` | shuffle a fraction of each feature column |
-| `suppress(fraction)` | replace a fraction of feature values with missing values |
-| `generalize(n_bins, represent, binning)` | exact numbers → ranges (500 → "400-600"); `represent="range"` makes the column categorical, `"midpoint"` keeps it numerical (500 → 500 as the range middle) |
-| `drop_links(fraction)` | remove a fraction of foreign keys (graph edges) |
-| `compose(m1, m2, ...)` | apply several masks in turn |
-| `from_dir(path)` | tables from `<path>/<table>.parquet` masked by an external tool |
-
-A model can be evaluated only on data with the same column types as its training data,
-so a model trained on the original data cannot be evaluated on `generalize(represent="range")`
-data (and vice versa).
-
-Sweep with `run_sweep(tasks, masks, seeds, csv_path=..., epochs=...)`, see
-`relgnn/experiments.py`.
+Built in: `masks.noise(strength)`, `masks.shuffle(fraction)`, `masks.from_dir(path)`.
 
 Own mask: a function editing the database in place, wrapped in `Mask`:
 

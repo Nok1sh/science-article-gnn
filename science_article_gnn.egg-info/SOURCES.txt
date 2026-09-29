@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+relgnn/__init__.py
+relgnn/data.py
+relgnn/graph.py
+relgnn/masks.py
+relgnn/model.py
+relgnn/text_embedder.py
+relgnn/training.py
+science_article_gnn.egg-info/PKG-INFO
+science_article_gnn.egg-info/SOURCES.txt
+science_article_gnn.egg-info/dependency_links.txt
+science_article_gnn.egg-info/requires.txt
+science_article_gnn.egg-info/top_level.txt

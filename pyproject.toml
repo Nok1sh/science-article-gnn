@@ -27,4 +27,4 @@ notebook = [
 ]
 
 [tool.setuptools]
-py-modules = ["gnn_entity", "model", "text_embedder"]
+packages = ["relgnn"]

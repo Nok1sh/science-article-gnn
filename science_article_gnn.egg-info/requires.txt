@@ -1,0 +1,11 @@
+torch
+torch_geometric
+pytorch-frame[full]
+relbench>=3.0.1
+sentence-transformers
+numpy
+pandas
+tqdm
+
+[notebook]
+ipykernel
