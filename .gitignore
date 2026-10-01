@@ -1,5 +1,7 @@
-﻿relbench/
+relbench/
 .venv/
 __pycache__/
 .ipynb_checkpoints/
 checkpoints/
+sweep.csv
+*.egg-info/

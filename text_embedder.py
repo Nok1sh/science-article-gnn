@@ -1,6 +1,5 @@
 import torch
 
-# Please run `pip install -U sentence-transformers`
 from sentence_transformers import SentenceTransformer
 from torch import Tensor
 
@@ -13,8 +12,6 @@ class GloveTextEmbedding:
         )
 
     def __call__(self, sentences: list[str]) -> Tensor:
-        # Some RelBench datasets can contain missing values in text columns.
-        # SentenceTransformers tokenizers expect strings.
         cleaned: list[str] = []
         for s in sentences:
             if s is None:
@@ -22,9 +19,8 @@ class GloveTextEmbedding:
             elif isinstance(s, str):
                 cleaned.append(s)
             else:
-                # Handle NaN/float/other scalars.
                 try:
-                    if isinstance(s, float) and s != s:  # NaN
+                    if isinstance(s, float) and s != s:
                         cleaned.append("")
                     else:
                         cleaned.append(str(s))

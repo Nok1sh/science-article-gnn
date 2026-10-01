@@ -1,5 +1,3 @@
-"""Training a GNN on :class:`RelData` and evaluating it on any compatible data."""
-
 import copy
 import math
 import tempfile
@@ -17,9 +15,9 @@ from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
 from tqdm import tqdm
 
-from .data import RelData
-from .graph import ColToStype
-from .model import Model
+from data import RelData
+from graph import ColToStype
+from model import Model
 
 
 @dataclass
@@ -31,14 +29,14 @@ class TrainConfig:
     aggr: str = "sum"
     num_layers: int = 2
     num_neighbors: int = 128
-    gnn: str = "sage"  # "sage" or "gat"
+    gnn: str = "sage"
     gat_heads: int = 4
     gat_dropout: float = 0.0
-    temporal_strategy: str = "uniform"  # "uniform" or "last"
+    temporal_strategy: str = "uniform"
     max_steps_per_epoch: int = 2000
     num_workers: int = 0
     seed: int = 42
-    device: str | None = None  # None: cuda if available
+    device: str | None = None
     verbose: bool = True
 
 
@@ -49,7 +47,6 @@ def _device(config: TrainConfig) -> torch.device:
 
 
 def _objective(data: RelData) -> tuple[Module, str, bool]:
-    """Loss function, metric to select the best epoch by, and whether higher is better."""
     task_type = data.task.task_type
     if task_type == TaskType.BINARY_CLASSIFICATION:
         return BCEWithLogitsLoss(), "roc_auc", True
@@ -59,7 +56,6 @@ def _objective(data: RelData) -> tuple[Module, str, bool]:
 
 
 def _regression_clamp(data: RelData) -> tuple[float, float] | None:
-    """2nd/98th percentiles of the train target, used to clip regression predictions."""
     if data.task.task_type != TaskType.REGRESSION:
         return None
     target = data.table("train").df[data.task.target_col].to_numpy()
@@ -105,12 +101,6 @@ def _loader(
 
 @dataclass
 class TrainedModel:
-    """A trained GNN plus everything needed to apply it to other data.
-
-    ``col_to_stype_dict`` and ``col_stats_dict`` describe how the model saw its
-    training data; any data it is evaluated on is encoded the same way.
-    """
-
     model: Model
     config: TrainConfig
     dataset_name: str
@@ -150,7 +140,6 @@ class TrainedModel:
 
     @torch.no_grad()
     def predict(self, data: RelData, split: str) -> np.ndarray:
-        """Predictions for the rows of ``data.table(split)``, in the same order."""
         self._check_compatible(data)
         graph, _ = data.graph(self.col_stats_dict)
         device = next(self.model.parameters()).device
@@ -172,11 +161,6 @@ class TrainedModel:
     def evaluate(
         self, data: RelData, splits: tuple[str, ...] = ("val", "test")
     ) -> dict[str, dict[str, float]]:
-        """Metrics per split, e.g. ``{"val": {"nmae": 0.44}, "test": {"nmae": 0.60}}``.
-
-        Test labels are hidden: test predictions are written to a temporary CSV and
-        scored by relbench against the hosted labels.
-        """
         results = {}
         for split in splits:
             pred = self.predict(data, split)
@@ -212,14 +196,10 @@ class TrainedModel:
 
     @classmethod
     def load(cls, path: str, data: RelData) -> "TrainedModel":
-        """Load a model saved with :meth:`save`; ``data`` is any compatible data, used
-        only to build the model's layers."""
-        # weights_only=False: the file also stores column stats and stypes, not just
-        # tensors. Only load files you created yourself.
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
         config = TrainConfig(**ckpt["config"])
         trained = cls(
-            model=None,  # type: ignore[arg-type]  # built below, needs the graph
+            model=None,  # type: ignore[arg-type]
             config=config,
             dataset_name=ckpt["dataset_name"],
             task_name=ckpt["task_name"],
@@ -240,11 +220,6 @@ class TrainedModel:
 
 
 def train(data: RelData, config: TrainConfig | None = None, **overrides) -> TrainedModel:
-    """Train a GNN on ``data`` and return the weights of the best validation epoch.
-
-    Hyperparameters come from ``config`` (defaults if omitted); keyword arguments
-    override single fields, e.g. ``train(data, epochs=25, lr=0.001)``.
-    """
     config = replace(config or TrainConfig(), **overrides)
     seed_everything(config.seed)
     device = _device(config)
@@ -317,5 +292,4 @@ def train(data: RelData, config: TrainConfig | None = None, **overrides) -> Trai
 def evaluate(
     model: TrainedModel, data: RelData, splits: tuple[str, ...] = ("val", "test")
 ) -> dict[str, dict[str, float]]:
-    """Same as ``model.evaluate(data, splits)``."""
     return model.evaluate(data, splits)

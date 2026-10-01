@@ -1,11 +1,3 @@
-"""Install the project together with a pyg-lib wheel matching the local torch build.
-
-pyg-lib is not published on PyPI: its wheels live on https://data.pyg.org/whl/ and are
-built per torch/CUDA version, so pyproject.toml cannot pin it portably.
-
-Usage (e.g. in Colab): python install.py
-"""
-
 import subprocess
 import sys
 import urllib.request
@@ -35,7 +27,6 @@ def find_pyg_wheel_index() -> str | None:
 
 
 def main() -> None:
-    # editable: changes to relgnn/ take effect without reinstalling
     pip_install("-e", ".")
 
     url = find_pyg_wheel_index()

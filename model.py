@@ -25,9 +25,7 @@ class Model(torch.nn.Module):
         out_channels: int,
         aggr: str,
         norm: str,
-        # List of node types to add shallow embeddings to input
         shallow_list: list[NodeType] | None = None,
-        # ID awareness
         id_awareness: bool = False,
         gnn: str = "sage",
         gat_heads: int = 4,
@@ -138,7 +136,6 @@ class Model(torch.nn.Module):
             )
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
-        # Add ID-awareness to the root node
         x_dict[entity_table][: seed_time.size(0)] += self.id_awareness_emb.weight
 
         rel_time_dict = self.temporal_encoder(

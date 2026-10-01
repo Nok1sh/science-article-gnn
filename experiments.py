@@ -1,12 +1,10 @@
-"""Sweeps over tasks, masks and seeds."""
-
 import time
 
 import pandas as pd
 
-from .data import load_data
-from .masks import Mask
-from .training import TrainConfig, train
+from data import load_data
+from masks import Mask
+from training import TrainConfig, train
 
 
 def run_sweep(
@@ -17,19 +15,6 @@ def run_sweep(
     csv_path: str | None = None,
     **overrides,
 ) -> pd.DataFrame:
-    """Train and evaluate every (task, mask, seed) combination.
-
-    For each task and seed a reference model is trained on the original data. Then for
-    every mask two numbers are recorded:
-
-    * ``masked_trained``: a model trained on the masked data, evaluated on it (the
-      realistic case: only the masked database is available),
-    * ``original_trained``: the reference model evaluated on the masked data (how much
-      the model relies on the exact values). Empty when the mask changes column types.
-
-    One row per (task, mask, seed, protocol, split) with the task's metrics as columns.
-    ``csv_path`` saves the table after every run, so partial results survive a crash.
-    """
     config = TrainConfig(verbose=False) if config is None else config
     rows: list[dict] = []
 
@@ -74,7 +59,7 @@ def run_sweep(
                 start = time.time()
                 try:
                     metrics = reference.evaluate(masked)
-                except ValueError:  # the mask changed column types
+                except ValueError:
                     continue
                 record(
                     dataset, task, mask.name, seed, "original_trained",

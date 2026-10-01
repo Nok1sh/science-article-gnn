@@ -27,4 +27,4 @@ notebook = [
 ]
 
 [tool.setuptools]
-packages = ["relgnn"]
+py-modules = ["data", "experiments", "graph", "masks", "model", "text_embedder", "training"]
